@@ -45,8 +45,6 @@ class UnderflowExceptionTest extends FunSpec with Matchers with BeforeAndAfterAl
       low = 0, high = 200, idleTime = 1.minute, bufferSize = 0, maxWaiters = Int.MaxValue))
     .newRichClient("127.0.0.1:7878")
 
-  val prepared = client.prepare(dml);
-
   def count() = client.select[Option[Long]]("select count(1) from test;")(_.values.headOption.flatMap {
     case IntValue(i) => Some(i.toLong)
     case LongValue(l) => Some(l)
@@ -60,9 +58,13 @@ class UnderflowExceptionTest extends FunSpec with Matchers with BeforeAndAfterAl
   it("should write") {
     val para = 10000
     // throw `too many connections` exception as well, maybe that's the reason of UnderflowException
-    noException should be thrownBy (1 to para).foreach { i =>
-      prepared(System.currentTimeMillis(), "test")
-    }
+    noException should be thrownBy Await.result(Future.traverse(1 to para) { i =>
+      val p = Promise[String]
+      val f = client.prepare(dml)(System.currentTimeMillis(), "test")
+      f.onSuccess(r => p success r.toString)
+      f.onFailure(t => p failure t)
+      p.future
+    }, Duration.Inf)
     util.Await.result(count(), util.Duration.Top) should equal(para)
   }
 
